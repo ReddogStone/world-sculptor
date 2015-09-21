@@ -1,8 +1,10 @@
 attribute vec3 aPosition;
 attribute vec3 aNormal;
+attribute vec3 aTangent;
 attribute vec2 aTexCoord;
 
-varying vec3 vNormal;
+varying mat3 vTBN;
+varying vec3 vTangent;
 varying vec2 vTexCoord;
 varying vec3 vWorldPos;
 
@@ -19,5 +21,9 @@ void main() {
 	
 	vWorldPos = worldPos.xyz;
 	vTexCoord = aTexCoord;
-	vNormal = (uWorldIT * vec4(aNormal, 1.0)).xyz;
+	vec3 normal = normalize((uWorldIT * vec4(aNormal, 0.0)).xyz);
+	vec3 tangent = normalize((uWorldIT * vec4(aTangent, 0.0)).xyz);
+	vec3 biTangent = normalize((uWorldIT * vec4(cross(aNormal, aTangent), 0.0)).xyz);
+
+	vTBN = mat3(tangent, biTangent, normal);
 }

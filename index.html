@@ -58,21 +58,41 @@
 			};
 	}) ();
 	
-	function startAnimation(canvas, engine, programs, meshLib, quadMesh) {
+	function startAnimation(canvas, engine, programs, textures, meshLib, mesh, camera) {
+		var CAMERA_DIST = 1.4;
+		var camera = Camera.make(
+			Matrix4.perspective(0.5 * Math.PI, canvas.width / canvas.height, 0.01, 1000),
+			new Vector3(0, 0.5 * CAMERA_DIST, CAMERA_DIST),
+			new Vector3(0, 0, 0),
+			new Vector3(0, 1, 0)
+		);
+
 		(function animate() {
 			engine.clear();
 
-			engine.withProgram(programs.SCREENSPACE, function(withParameters) {
-				withParameters({
-					uWorld: new Matrix4()
-						.translate(new Vector3(canvas.width * 0.5, canvas.height * 0.5, 0.0))
-						.scale(new Vector3(400, 300, 1.0))
-						.val,
+			var time = Date.now() * 0.001;
+
+//			camera.pos.x = CAMERA_DIST * Math.sin(time);
+//			camera.pos.y = 0.5 * CAMERA_DIST * Math.sin(time);
+//			camera.pos.z = CAMERA_DIST * Math.cos(time);
+
+			var globalTrans = new Matrix4().rotateY(time);
+
+			engine.withProgram(programs.SIMPLE, function(withParameters) {
+				var params = Object.merge({
+					uWorld: globalTrans.val,
+					uWorldIT: globalTrans.clone().invert().transpose().val,
 					uScreenSize: [canvas.width, canvas.height],
-					uColor: [1.0, 1.0, 0.0, 1.0],
-					uTexture: {}
-				}, function(withBuffers) {
-					meshLib.render(withBuffers, quadMesh);
+					uColor: [1.0, 1.0, 1.0, 1.0],
+					uLuminosity: 0.0,
+					uTexture: { texture: textures.BRICK, sampler: 0 },
+					uNormalTexture: { texture: textures.BRICK_N, sampler: 1 },
+					uPosLight1: new Vector3(0, 0.3, 0.6).toArray(),
+					uColorLight1: [1, 1, 1],
+				}, Camera.makeParameters(camera));
+
+				withParameters(params, function(withBuffers) {
+					meshLib.render(withBuffers, mesh);
 				});
 			});
 
@@ -119,12 +139,29 @@
 		SCREENSPACE: { vertex: 'assets/shaders/screenspace.vshader', fragment: 'assets/shaders/screenspace.fshader' }
 	};
 
+	var Textures = {
+		SPRUCE: 'assets/textures/spruce.png',
+		DIRT: 'assets/textures/dirt.png',
+		DIRT_N: 'assets/textures/dirt_n.png',
+		SAND: 'assets/textures/sand.jpg',
+		SAND_N: 'assets/textures/sand_n.jpg',
+		BRICK: 'assets/textures/brick.jpg',
+		BRICK_N: 'assets/textures/brick_n.jpg',
+		DIAMOND_N: 'assets/textures/diamond_block_n.png',
+		TEST_NORMAL: 'assets/textures/test_normal.jpg'
+	};
+
 	function start() {
 		var canvas = document.getElementById('canvas');
 		
 		var engine = Engine3D(canvas, true);
 		engine.setClearColor(Color.make(0.2, 0.2, 0.2));
-//		engine.setBlendMode(BlendMode.SOLID);
+		engine.setBlendMode(BlendMode.SOLID);
+
+		var textures = {};
+		for (var key in Textures) {
+			textures[key] = engine.createTextureFromFile(Textures[key]);
+		}		
 
 		var programs = {};
 		for (var key in ShaderPrograms) {
@@ -134,9 +171,9 @@
 
 		var meshLib = Mesh(engine.createVertexBuffer, engine.createIndexBuffer);
 
-		var quadMesh = meshLib.make( MeshUtils.createScreenQuadData() );
+		var quadMesh = meshLib.make( MeshUtils.createCubeData() );
 		
-		startAnimation(canvas, engine, programs, meshLib, quadMesh);
+		startAnimation(canvas, engine, programs, textures, meshLib, quadMesh);
 	}
 	
 	start();
