@@ -4,7 +4,7 @@
 	<meta charset="UTF-8"/>	
 	<title>World Sculptor 0.0.1</title>
 	<link rel="icon" href="data/vectory_icon.png" type="image/png">
-	
+
 	<script src="../jabaku/math/Matrix3.js" type="text/javascript"></script>
 	<script src="../jabaku/math/Matrix4.js" type="text/javascript"></script>
 	<script src="../jabaku/math/Vector2.js" type="text/javascript"></script>
@@ -14,6 +14,7 @@
 	<script src="../jabaku/math/Ray.js" type="text/javascript"></script>
 	<script src="../jabaku/math/Mathutils.js" type="text/javascript"></script>
 
+	<script src="../jabaku/engine/time.js" type="text/javascript"></script>
 	<script src="../jabaku/engine/webgl-debug.js" type="text/javascript"></script>
 	<script src="../jabaku/engine/utils.js" type="text/javascript"></script>
 	<script src="../jabaku/engine/fileutils.js" type="text/javascript"></script>
@@ -42,11 +43,19 @@
 	<script src="../jabaku/entity_system/system_base.js" type="text/javascript"></script>
 
 	<script src="../jabaku/profiler/profiler.js" type="text/javascript"></script>
+
+	<script src="sculpt-engine/chunk.js" type="text/javascript"></script>
+	<script src="sculpt-engine/world.js" type="text/javascript"></script>
 </head>
 <body>
 <canvas id="canvas" width="1024" height="768"></canvas>
 
 <script>
+	var CHUNK_SIZE = 13;
+	var PLAYER_SPEED = 10;
+
+	var g_moveDir = new Vector3();
+
 	window.requestAnimFrame = (function () {
 		return window.requestAnimationFrame ||
 			window.webkitRequestAnimationFrame ||
@@ -58,41 +67,56 @@
 			};
 	}) ();
 	
-	function startAnimation(canvas, engine, programs, textures, meshLib, mesh, camera) {
-		var CAMERA_DIST = 1.4;
+	function startAnimation(canvas, engine, programs, textures, meshLib, world) {
+		var CAMERA_DIST = 1.3 * CHUNK_SIZE;
 		var camera = Camera.make(
 			Matrix4.perspective(0.5 * Math.PI, canvas.width / canvas.height, 0.01, 1000),
-			new Vector3(0, 0.5 * CAMERA_DIST, CAMERA_DIST),
+			new Vector3(0, 0.3 * CAMERA_DIST, CAMERA_DIST),
 			new Vector3(0, 0, 0),
 			new Vector3(0, 1, 0)
 		);
 
+		var lastTime = Time.now() * 0.001;
 		(function animate() {
 			engine.clear();
 
-			var time = Date.now() * 0.001;
+			var time = Time.now() * 0.001;
+			var delta = time - lastTime;
+			lastTime = time;
+
+			var move = g_moveDir.clone().scale(delta * PLAYER_SPEED);
+			camera.pos.add(move);
+			camera.target.add(move);
+
+			var objects = world.getChunksForPlayerPos(camera.pos, {x: 3, y: 2, z: 3});
 
 //			camera.pos.x = CAMERA_DIST * Math.sin(time);
 //			camera.pos.y = 0.5 * CAMERA_DIST * Math.sin(time);
 //			camera.pos.z = CAMERA_DIST * Math.cos(time);
 
-			var globalTrans = new Matrix4().rotateY(time);
+			var globalTrans = new Matrix4();//.rotateY(time).translate(new Vector3(-0.5 * CHUNK_SIZE, -0.5 * CHUNK_SIZE, -0.5 * CHUNK_SIZE));
 
 			engine.withProgram(programs.SIMPLE, function(withParameters) {
-				var params = Object.merge({
-					uWorld: globalTrans.val,
-					uWorldIT: globalTrans.clone().invert().transpose().val,
+				var sceneParams = Object.merge({
 					uScreenSize: [canvas.width, canvas.height],
 					uColor: [1.0, 1.0, 1.0, 1.0],
 					uLuminosity: 0.0,
 					uTexture: { texture: textures.BRICK, sampler: 0 },
 					uNormalTexture: { texture: textures.BRICK_N, sampler: 1 },
-					uPosLight1: new Vector3(0, 0.3, 0.6).toArray(),
+					uPosLight1: camera.pos.toArray(),
 					uColorLight1: [1, 1, 1],
 				}, Camera.makeParameters(camera));
 
-				withParameters(params, function(withBuffers) {
-					meshLib.render(withBuffers, mesh);
+				objects.forEach(function(sceneObject) {
+					var worldTrans = globalTrans.clone().multiply(sceneObject.transform);
+
+					var params = Object.merge(sceneParams, {
+						uWorld: worldTrans.val,
+						uWorldIT: worldTrans.clone().invert().transpose().val,
+					});
+					withParameters(params, function(withBuffers) {
+						meshLib.render(withBuffers, sceneObject.mesh);
+					});
 				});
 			});
 
@@ -151,6 +175,36 @@
 		TEST_NORMAL: 'assets/textures/test_normal.jpg'
 	};
 
+	function handleKeyDown(event) {
+		if (event.which == 87) { // W
+			g_moveDir.z = -1;
+		}
+		if (event.which == 65) { // A
+			g_moveDir.x = -1;
+		}
+		if (event.which == 83) { // S
+			g_moveDir.z = 1;
+		}
+		if (event.which == 68) { // D
+			g_moveDir.x = 1;
+		}
+	}
+
+	function handleKeyUp(event) {
+		if (event.which == 87) { // W
+			g_moveDir.z = 0;
+		}
+		if (event.which == 65) { // A
+			g_moveDir.x = 0;
+		}
+		if (event.which == 83) { // S
+			g_moveDir.z = 0;
+		}
+		if (event.which == 68) { // D
+			g_moveDir.x = 0;
+		}
+	}	
+
 	function start() {
 		var canvas = document.getElementById('canvas');
 		
@@ -172,8 +226,46 @@
 		var meshLib = Mesh(engine.createVertexBuffer, engine.createIndexBuffer);
 
 		var quadMesh = meshLib.make( MeshUtils.createCubeData() );
+
+		var chunkData = new Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
+		var index = 0;
+		for (var y = 0; y < CHUNK_SIZE; y++) {
+			for (var z = 0; z < CHUNK_SIZE; z++) {
+				for (var x = 0; x < CHUNK_SIZE; x++) {
+					var dx = 0.5 * CHUNK_SIZE - x - 0.5;
+					var dy = 0.5 * CHUNK_SIZE - y - 0.5;
+					var dz = 0.5 * CHUNK_SIZE - z - 0.5;
+					chunkData[index++] = (dx * dx + dy * dy + dz * dz > 0.25 * CHUNK_SIZE * CHUNK_SIZE) ? 1 : 0;
+				}
+			}
+		}
+
+		var chunk = Chunk.make({x: CHUNK_SIZE, y: CHUNK_SIZE, z: CHUNK_SIZE}, chunkData);
+		var chunkMesh = meshLib.make(Chunk.createMeshData(chunk));
+		var chunkObject = {
+			mesh: chunkMesh,
+			transform: new Matrix4()
+		};
+
+		var chunkObjects = [];
+		for (var x = 0; x < 4; x++) {
+			for (var z = 0; z < 4; z++) {
+				chunkObjects.push({
+					mesh: chunkMesh,
+					transform: new Matrix4().translate(new Vector3(CHUNK_SIZE * x, 0, CHUNK_SIZE * z))
+				});
+			}
+		}
+
+		var SPHERE_RADIUS = 10;
+		var world = World.make(meshLib, function(x, y, z) {
+			return y > -10 && y < 1;
+		});
+
+		document.addEventListener('keydown', handleKeyDown);
+		document.addEventListener('keyup', handleKeyUp);
 		
-		startAnimation(canvas, engine, programs, textures, meshLib, quadMesh);
+		startAnimation(canvas, engine, programs, textures, meshLib, world);
 	}
 	
 	start();
